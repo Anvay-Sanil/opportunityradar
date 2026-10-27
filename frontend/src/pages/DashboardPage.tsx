@@ -11,7 +11,8 @@ import {
   Radar,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { api } from '../lib/api';
+import { api, ApiError, getErrorMessage } from '../lib/api';
+import { RequestError } from '../components/ui/RequestError';
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -19,19 +20,21 @@ export function DashboardPage() {
   const [matches, setMatches] = useState<any[]>([]);
   const [profileExists, setProfileExists] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       try {
         const [profile, appStats, matchedOpps] = await Promise.all([
-          api.profile.get().catch(() => null),
-          api.applications.stats().catch(() => null),
-          api.opportunities.getMatches({ page_size: '5' }).catch(() => null),
+          api.profile.get().catch((err) => { if (err instanceof ApiError && err.status === 404) return null; throw err; }),
+          api.applications.stats(),
+          api.opportunities.getMatches({ page_size: '5' }).catch((err) => { if (err instanceof ApiError && err.status === 400) return null; throw err; }),
         ]);
         setProfileExists(!!profile);
         setStats(appStats);
         setMatches(matchedOpps?.items || []);
-      } catch {
+      } catch (err) {
+        setError(getErrorMessage(err));
       } finally {
         setLoading(false);
       }
@@ -46,6 +49,8 @@ export function DashboardPage() {
       </div>
     );
   }
+
+  if (error) return <RequestError message={error} onRetry={() => window.location.reload()} />;
 
   return (
     <div className="space-y-8 max-w-6xl mx-auto">

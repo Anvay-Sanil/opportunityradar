@@ -11,7 +11,8 @@ import {
   MapPin,
   Banknote,
 } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError, getErrorMessage } from '../lib/api';
+import { RequestError } from '../components/ui/RequestError';
 
 const STATUS_STYLES: Record<string, string> = {
   saved: 'bg-white/[0.06] text-gray-300',
@@ -38,10 +39,14 @@ export function ApplicationsPage() {
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
+    setLoadFailed(false);
     try {
       const params: Record<string, string> = {};
       if (statusFilter) params.status_filter = statusFilter;
@@ -52,7 +57,7 @@ export function ApplicationsPage() {
       setApplications(appRes.items);
       setTotal(appRes.total);
       setStats(statsRes);
-    } catch {} finally {
+    } catch (err) { setError(getErrorMessage(err)); setLoadFailed(true); } finally {
       setLoading(false);
     }
   }, [statusFilter]);
@@ -63,18 +68,21 @@ export function ApplicationsPage() {
     try {
       await api.applications.update(appId, { status: newStatus });
       await load();
-    } catch {}
+    } catch (err) { setError(getErrorMessage(err)); }
   };
 
   const handleDelete = async (appId: string) => {
     try {
       await api.applications.delete(appId);
       await load();
-    } catch {}
+    } catch (err) { setError(getErrorMessage(err)); }
   };
+
+  if (loadFailed && !loading) return <RequestError message={error || 'Unable to load applications.'} onRetry={load} />;
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
+      {error && <RequestError message={error} />}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { api } from './api';
+import { api, ApiError, getErrorMessage } from './api';
 
 interface User {
   id: string;
@@ -13,6 +13,8 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   loading: boolean;
+  sessionError: string | null;
+  retrySession: () => void;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, full_name: string) => Promise<void>;
   logout: () => void;
@@ -24,20 +26,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
   const [loading, setLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const retrySession = useCallback(() => setAttempt((value) => value + 1), []);
 
   useEffect(() => {
+    let active = true;
+    setSessionError(null);
     if (token) {
+      setLoading(true);
       api.auth.me()
-        .then(setUser)
-        .catch(() => {
-          localStorage.removeItem('token');
-          setToken(null);
+        .then((currentUser) => { if (active) setUser(currentUser); })
+        .catch((error) => {
+          if (!active) return;
+          if (error instanceof ApiError && error.status === 401) {
+            localStorage.removeItem('token');
+            setToken(null);
+            setUser(null);
+          } else {
+            setSessionError(getErrorMessage(error));
+          }
         })
-        .finally(() => setLoading(false));
+        .finally(() => { if (active) setLoading(false); });
     } else {
+      setUser(null);
       setLoading(false);
     }
-  }, [token]);
+    return () => { active = false; };
+  }, [token, attempt]);
 
   const login = useCallback(async (email: string, password: string) => {
     const res = await api.auth.login({ email, password });
@@ -57,10 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('token');
     setToken(null);
     setUser(null);
+    setSessionError(null);
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, token, loading, sessionError, retrySession, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 from sendgrid import SendGridAPIClient
@@ -31,7 +32,7 @@ class EmailService:
                 subject=subject,
                 html_content=Content("text/html", html_content),
             )
-            response = self.client.send(message)
+            response = await asyncio.to_thread(self.client.send, message)
             logger.info(f"Email sent to {to_email}: status {response.status_code}")
             return response.status_code in (200, 201, 202)
         except Exception as e:

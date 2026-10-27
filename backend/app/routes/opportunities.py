@@ -166,7 +166,7 @@ async def list_opportunities(
     profile = profile_result.scalar_one_or_none()
 
     if profile and opportunities:
-        scored = await ranking_engine.rank_for_user(profile, list(opportunities), db)
+        scored = await ranking_engine.rank_for_user(profile, list(opportunities), db, top_k=len(opportunities))
         score_map = {s["opportunity_id"]: s for s in scored}
         for opp in opportunities:
             s = score_map.get(str(opp.id))
@@ -214,39 +214,19 @@ async def get_matches(
         location_filter = or_(*[Opportunity.location.ilike(f"%{loc}%") for loc in profile.preferred_locations])
         query = query.where(location_filter)
 
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
-
-    result = await db.execute(query.offset(0).limit(200))
-    all_opps = result.scalars().all()
-    if not all_opps:
-        return PaginatedResponse(
-            items=[], total=0, page=1, page_size=page_size, total_pages=1
-        )
-
-    scored = await ranking_engine.rank_for_user(profile, list(all_opps), db, top_k=page_size)
-    opp_ids = [s["opportunity_id"] for s in scored]
-    score_map = {s["opportunity_id"]: s for s in scored}
-
-    opp_result = await db.execute(
-        select(Opportunity).where(
-            Opportunity.id.in_([uuid.UUID(oid) for oid in opp_ids if oid])
-        )
-    )
-    opportunities = opp_result.scalars().all()
-
-    for opp in opportunities:
-        s = score_map.get(str(opp.id))
-        if s:
-            opp.match_score = s.get("score", 0) / 100.0
-            opp.match_reason = s.get("reason", "")
-            opp.skill_gaps = s.get("skill_gaps", [])
-
-    opportunities.sort(
-        key=lambda o: getattr(o, "match_score", 0),
-        reverse=True,
-    )
+    result = await db.execute(query.order_by(Opportunity.created_at.desc(), Opportunity.id))
+    all_opps = list(result.scalars())
+    scored = await ranking_engine.rank_for_user(profile, all_opps, db, top_k=None)
+    total = len(scored)
+    selected = scored[(page - 1) * page_size:page * page_size]
+    by_id = {str(opp.id): opp for opp in all_opps}
+    opportunities = []
+    for ranking in selected:
+        opp = by_id[ranking["opportunity_id"]]
+        opp.match_score = ranking["score"] / 100.0
+        opp.match_reason = ranking["reason"]
+        opp.skill_gaps = ranking["skill_gaps"]
+        opportunities.append(opp)
 
     today = date.today()
     return PaginatedResponse(
@@ -254,7 +234,7 @@ async def get_matches(
         total=total,
         page=page,
         page_size=page_size,
-        total_pages=1,
+        total_pages=max(1, (total + page_size - 1) // page_size),
     )
 
 

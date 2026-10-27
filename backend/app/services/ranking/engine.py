@@ -3,8 +3,8 @@ import logging
 import re
 import hashlib
 from typing import Optional
-from openai import AsyncOpenAI
-from anthropic import AsyncAnthropic
+import asyncio
+import httpx
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
@@ -52,75 +52,96 @@ class RankingEngine:
         self.anthropic_client = None
         self.gemini_client = None
         self._redis = None
-        self._init_clients()
+        self._clients_initialized = False
 
     def _init_clients(self):
-        if settings.openai_api_key:
-            self.openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-        if settings.anthropic_api_key:
-            self.anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key)
-        if settings.gemini_api_key:
+        if self._clients_initialized:
+            return
+        if settings.llm_provider == "openai" and settings.openai_api_key:
+            from openai import AsyncOpenAI
+            self.openai_client = AsyncOpenAI(api_key=settings.openai_api_key,
+                http_client=httpx.AsyncClient(timeout=20), max_retries=0)
+        elif settings.llm_provider == "anthropic" and settings.anthropic_api_key:
+            from anthropic import AsyncAnthropic
+            self.anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key,
+                http_client=httpx.AsyncClient(timeout=20), max_retries=0)
+        elif settings.llm_provider == "gemini" and settings.gemini_api_key:
             from google import genai
             self.gemini_client = genai.Client(api_key=settings.gemini_api_key)
+        self._clients_initialized = True
+
+    async def aclose(self):
+        if self._redis is not None:
+            await self._redis.aclose()
+        for client in (self.openai_client, self.anthropic_client):
+            if client is not None:
+                await client.close()
+        if self.gemini_client is not None:
+            await self.gemini_client.aio.aclose()
+            self.gemini_client.close()
+        self._redis = None
+        self.openai_client = self.anthropic_client = self.gemini_client = None
+        self._clients_initialized = False
 
     async def _get_redis(self):
         if self._redis is None and settings.redis_url:
-            try:
-                import redis.asyncio as aioredis
-                self._redis = aioredis.from_url(settings.redis_url, decode_responses=True)
-            except Exception:
-                logger.warning("Redis unavailable, caching disabled")
+            import redis.asyncio as aioredis
+            self._redis = aioredis.from_url(settings.redis_url, decode_responses=True,
+                socket_connect_timeout=1, socket_timeout=1)
         return self._redis
 
-    def _cache_key(self, profile_id: str, opportunities: list[Opportunity]) -> str:
-        sorted_ids = sorted(str(o.id) for o in opportunities)
-        raw = f"{profile_id}:{','.join(sorted_ids)}"
-        return f"rank:{hashlib.md5(raw.encode()).hexdigest()}"
+    def _cache_key(self, profile, opportunities, top_k):
+        profile_fields = ("user_id", "skills", "year", "branch", "degree", "preferred_domains",
+            "preferred_locations", "work_mode", "min_stipend")
+        opportunity_fields = ("id", "updated_at", "title", "description", "company", "location",
+            "work_mode", "stipend", "skills_required", "domains")
+        data = {
+            "version": 2, "provider": settings.llm_provider, "model": settings.llm_model,
+            "top_k": top_k,
+            "profile": {name: getattr(profile, name, None) for name in profile_fields},
+            "opportunities": [{name: getattr(opp, name, None) for name in opportunity_fields}
+                for opp in sorted(opportunities, key=lambda opp: str(opp.id))],
+        }
+        return "rank:" + hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
 
-    async def rank_for_user(
-        self,
-        profile: StudentProfile,
-        opportunities: list[Opportunity],
-        db: AsyncSession,
-        top_k: int = 20,
-    ) -> list[dict]:
-        if not opportunities:
+    async def rank_for_user(self, profile, opportunities, db, top_k=20):
+        if not opportunities or (top_k is not None and top_k <= 0):
             return []
-
         redis = await self._get_redis()
-        if redis:
-            ck = self._cache_key(str(profile.user_id), opportunities)
+        ck = self._cache_key(profile, opportunities, top_k)
+        if redis is not None:
             try:
                 cached = await redis.get(ck)
                 if cached:
                     return json.loads(cached)
             except Exception:
-                pass
+                logger.debug("Ranking cache unavailable")
 
-        if profile.skills and profile.preferred_domains:
-            pre_filtered = self._keyword_filter(profile, opportunities)
-        else:
-            pre_filtered = opportunities
-
-        candidates = pre_filtered[:50]
-        if not candidates:
-            return []
-
-        has_llm = self.openai_client or self.anthropic_client or self.gemini_client
-        if not has_llm:
-            result = self._score_fallback(profile, candidates)
-        else:
+        # Every filtered opportunity is scored. LLM work is bounded to the best
+        # keyword candidates, while the remainder retain their fallback scores.
+        candidates = sorted(opportunities,
+            key=lambda opp: (-self._compute_keyword_score(profile, opp), str(opp.id)))
+        result = self._score_fallback(profile, candidates)
+        key = {"openai": settings.openai_api_key, "anthropic": settings.anthropic_api_key,
+            "gemini": settings.gemini_api_key}.get(settings.llm_provider)
+        if key:
             try:
-                result = await self._llm_rank(profile, candidates, top_k)
-            except Exception as e:
-                logger.error(f"LLM ranking failed: {e}, using fallback")
-                result = self._score_fallback(profile, candidates)
-
-        if redis and result:
+                ranked = await asyncio.wait_for(self._llm_rank(profile, candidates[:50], 50), timeout=30)
+                by_id = {item["opportunity_id"]: item for item in result}
+                for item in ranked:
+                    if item["opportunity_id"] in by_id:
+                        by_id[item["opportunity_id"]] = item
+                result = list(by_id.values())
+            except Exception:
+                logger.exception("LLM ranking unavailable; using keyword matching")
+        result.sort(key=lambda item: (-item["score"], item["opportunity_id"]))
+        if top_k is not None:
+            result = result[:top_k]
+        if redis is not None and result:
             try:
                 await redis.setex(ck, 3600, json.dumps(result))
             except Exception:
-                pass
+                logger.debug("Ranking cache write failed")
         return result
 
     def _compute_keyword_score(self, profile: StudentProfile, opp: Opportunity) -> int:
@@ -129,7 +150,7 @@ class RankingEngine:
         profile_domains_lower = [d.lower() for d in (profile.preferred_domains or [])]
         opp_skills = [s.lower() for s in (opp.skills_required or [])]
         opp_domains = [d.lower() for d in (opp.domains or [])]
-        text = (opp.title + " " + opp.description + " " + opp.company).lower()
+        text = ((opp.title or "") + " " + (opp.description or "") + " " + (opp.company or "")).lower()
 
         for skill in profile_skills_lower:
             if skill in text or skill in opp_skills:
@@ -164,6 +185,7 @@ class RankingEngine:
         opportunities: list[Opportunity],
         top_k: int,
     ) -> list[dict]:
+        self._init_clients()
         opp_text = []
         for opp in opportunities:
             desc = (opp.description or "")[:200]
@@ -212,7 +234,7 @@ class RankingEngine:
                 return self._score_fallback(profile, opportunities)
             response = await self.openai_client.chat.completions.create(
                 model=settings.llm_model or "gpt-4o",
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt + '\nWrap the JSON array in {"rankings": [...]}'}],
                 temperature=0.3,
                 response_format={"type": "json_object"},
             )
@@ -231,25 +253,35 @@ class RankingEngine:
             logger.error(f"Failed to parse LLM response: {raw[:200]}")
             return self._score_fallback(profile, opportunities)
 
+        valid_ids = {str(opp.id) for opp in opportunities}
+        validated = {}
+        if not isinstance(results, list):
+            raise ValueError("Ranking response must be an array")
         for item in results:
-            if "skill_gaps" not in item:
-                item["skill_gaps"] = []
-
-        results.sort(key=lambda x: x.get("score", 0), reverse=True)
-        return results[:top_k]
+            if not isinstance(item, dict) or item.get("opportunity_id") not in valid_ids:
+                continue
+            score = float(item.get("score", 0))
+            if not 0 <= score <= 100:
+                continue
+            gaps = item.get("skill_gaps", [])
+            validated[item["opportunity_id"]] = {
+                "opportunity_id": item["opportunity_id"], "score": score,
+                "reason": str(item.get("reason", "")),
+                "skill_gaps": [gap for gap in gaps if isinstance(gap, str)] if isinstance(gaps, list) else [],
+            }
+        return sorted(validated.values(), key=lambda item: (-item["score"], item["opportunity_id"]))[:top_k]
 
     def _score_fallback(self, profile: StudentProfile, opportunities: list[Opportunity]) -> list[dict]:
         scored_pairs = []
         for opp in opportunities:
             score = self._compute_keyword_score(profile, opp)
-            if score > 0:
-                scored_pairs.append((score, opp))
+            scored_pairs.append((score, opp))
 
         scored_pairs.sort(key=lambda x: x[0], reverse=True)
         if not scored_pairs:
             return []
 
-        max_score = max(s for s, _ in scored_pairs) if scored_pairs else 1
+        max_score = max(1, max(s for s, _ in scored_pairs))
         results = []
         for score, opp in scored_pairs:
             normalized = min(round(score / max_score * 95), 95)

@@ -1,6 +1,6 @@
-FROM node:20-alpine AS base
+FROM node:22-alpine AS base
 WORKDIR /app
-COPY package.json ./
+COPY package.json package-lock.json ./
 RUN npm ci
 
 FROM base AS dev
@@ -9,6 +9,8 @@ EXPOSE 5173
 CMD ["npm", "run", "dev"]
 
 FROM base AS build
+ARG VITE_API_URL
+ENV VITE_API_URL=$VITE_API_URL
 COPY . .
 RUN npm run build
 

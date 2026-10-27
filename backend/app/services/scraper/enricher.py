@@ -26,21 +26,23 @@ class CompanyAgeEnricher:
             stats["checked"] = len(companies)
 
             for company in companies:
+                company_name = company.name
                 try:
-                    age = await self._find_founded_date(company.name)
-                    if age:
-                        company.founded_date = age
-                        company.founded_year = age.year
-                        await db.flush()
+                    async with db.begin_nested():
+                        age = await self._find_founded_date(company.name)
+                        if age:
+                            company.founded_date = age
+                            company.founded_year = age.year
+                            await db.flush()
 
-                        await db.execute(
-                            update(Opportunity)
-                            .where(Opportunity.company == company.name)
-                            .values(company_founded_date=age)
-                        )
-                        stats["found_age"] += 1
+                            await db.execute(
+                                update(Opportunity)
+                                .where(Opportunity.company == company.name)
+                                .values(company_founded_date=age)
+                            )
+                            stats["found_age"] += 1
                 except Exception as e:
-                    logger.error(f"Error enriching {company.name}: {e}")
+                    logger.error(f"Error enriching {company_name}: {e}")
                     stats["errors"] += 1
 
             await db.commit()

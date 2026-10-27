@@ -1,131 +1,93 @@
 # OpportunityRadar
 
-AI-powered internship aggregator that scrapes real opportunities from LinkedIn, detects young startups, and ranks them using Google Gemini to match your student profile.
-
-## Features
-
-- **Multi-Source Aggregation** — Real internships from LinkedIn (69+ live listings)
-- **AI-Powered Matching** — Google Gemini ranks every opportunity with a personalized score and explanation based on your skills, year, branch, and preferences
-- **Young Startup Detection** — Auto-identifies startups and early-stage companies
-- **Weekly Digest** — Top matches delivered to your inbox (SendGrid configurable)
-- **Application Pipeline** — Track each application: saved → applied → interview → offered
-- **Custom Profile** — Skills, domains, locations, work mode — all used for matching
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS, Recharts |
-| Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 (async) |
-| Database | PostgreSQL 16 (asyncpg) |
-| LLM | Google Gemini 2.5 Flash (free tier, no credit card) |
-| Auth | JWT (bcrypt + python-jose) |
-| Task Queue | Celery + Redis |
-| Scraping | httpx, Playwright, BeautifulSoup4 |
-| CI | GitHub Actions (daily scraping) |
+Internship discovery and application tracking with a React frontend, a FastAPI API,
+PostgreSQL, and optional Gemini/OpenAI/Anthropic ranking.
 
 ## Architecture
 
+- Vercel serves the static React frontend from `frontend/`.
+- A separate Docker service runs FastAPI. The frontend calls its public URL through `VITE_API_URL`.
+- PostgreSQL stores accounts, profiles, listings, applications and digest preferences.
+- Redis queues jobs; a Celery worker runs scrapers, enrichment, email and maintenance.
+- One Celery beat process schedules jobs. GitHub Actions scraping is manual-only.
+
+Vercel's SPA rewrite does not run the Python backend. See [deployment and recovery](docs/deployment.md)
+for the complete production topology and restoring the existing deployment.
+
+## Local development
+
+```sh
+cp backend/.env.example backend/.env
+docker compose up --build
 ```
-                    ┌─────────────┐
-                    │   Vercel    │  ← Frontend (React) + API CRUD
-                    │ (serverless)│     (auth, listings, applications)
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │  Render /   │  ← Backend workers (Celery + Redis)
-                    │  Railway    │     (scraping, digest, background jobs)
-                    └──────┬──────┘
-                           │
-                    ┌──────▼──────┐
-                    │  Supabase   │  ← PostgreSQL database
-                    └─────────────┘
-```
 
-**Important:** Vercel is serverless (10s max duration). Long-running background jobs (scraping, email digests) run on Render/Railway via Celery + Redis, or as GitHub Actions cron jobs.
+Open http://localhost:5173. Compose supplies container database/Redis URLs and the
+Vite proxy target. Change the development JWT secret before exposing this stack.
 
-## Quick Start (Local)
+To run Python and Vite on the host instead:
 
-```bash
-# 1. Start Postgres + Redis
+```sh
 docker compose up -d db redis
-
-# 2. Backend
 cd backend
-python -m venv venv && source venv/bin/activate
+python -m venv venv
+# Activate venv, then:
 pip install -r requirements.txt
-cp .env.example .env   # edit with your config
+# Copy .env.example to .env; set DATABASE_URL to localhost:5432 and REDIS_URL to localhost:6379/0.
 uvicorn app.main:app --reload
-
-# 3. Frontend
+# In another terminal:
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Open http://localhost:5173 — register, set up your profile, and start matching.
+## Tests
 
-### Scrape Real Data
+Use a separate disposable PostgreSQL 16 database named `opportunityradar_test`.
+The suite truncates its tables and deliberately rejects database names that do not end in `_test`.
+It never uses the application's `DATABASE_URL` or production AI/email credentials.
 
-```bash
-curl -X POST http://localhost:8000/api/admin/scrape \
-  -H "Authorization: Bearer <your_jwt_token>"
-```
-
-### Run Tests
-
-```bash
+```sh
 cd backend
-pip install pytest pytest-asyncio httpx
-python -m pytest tests/ -v
+pip install -r requirements-dev.txt
+export TEST_DATABASE_URL='postgresql+asyncpg://postgres:test-password@localhost:5432/opportunityradar_test'
+python -m pytest -q
+
+cd ../frontend
+npm ci
+npm test
+npm run build
 ```
 
-## Deployment
+On PowerShell, set the environment variable using `$env:TEST_DATABASE_URL = '...'`.
+CI runs the tests on Python 3.12/PostgreSQL 16 and builds the frontend on Node 22.
 
-### Deploy to Render (free, no credit card)
+## Administration and email
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
+Administrative routes require an authenticated account whose UUID is explicitly
+listed in `ADMIN_USER_IDS`. Default `[]` denies all administrative access. Do not
+grant privileges based on unverified email addresses. Obtain the trusted account's
+UUID from `/api/auth/me`, then set the JSON allowlist in the API environment.
 
-1. **Fork/clone this repo** to your GitHub account
-2. **Click the Deploy to Render button above** — it reads `render.yaml`
-3. **Or set up manually:**
-   - Create a **Web Service** on Render, connect your GitHub repo
-   - Set **Root Directory** to `backend`
-   - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - Select the **Free** plan
-4. **Set environment variables** in Render dashboard:
-   - `DATABASE_URL` — use Render's managed PostgreSQL (create one in dashboard)
-   - `SUPABASE_JWT_SECRET` — generate a random 64-char string
-   - `GEMINI_API_KEY` — your Gemini API key
-   - `FRONTEND_URL` — your Vercel frontend URL (once deployed)
-   - `CORS_ORIGINS` — e.g. `["https://opportunityradar.vercel.app"]`
-   - `DEBUG` — `false`
-5. **Deploy the frontend on Vercel:**
-   - Import the same repo into Vercel
-   - Set **Root Directory** to `frontend`
-   - **Build Command:** `npm install && npm run build`
-   - **Output Directory:** `dist`
-   - Set env var `VITE_API_URL` to your Render backend URL (e.g. `https://opportunityradar-api.onrender.com`)
-6. **Set up scraping** via GitHub Actions (`.github/workflows/scrape.yml`) — add `DATABASE_URL` and `SUPABASE_JWT_SECRET` to your repo secrets
+`POST /api/admin/scrape` and `POST /api/admin/enrich` return HTTP 202 and a task ID.
+Jobs are deduplicated and run in the worker, rather than inside the HTTP request.
 
-### Deploy to Vercel (frontend only)
+Digests use `DIGEST_TIMEZONE` (UTC by default, displayed in the UI). Monthly means
+the first selected weekday of the month; biweekly is anchored to the previous
+successful delivery. Missed runs catch up within 24 hours. Set SendGrid credentials
+and a verified sender in the worker environment. Failed sends remain eligible for
+retry and appear as failed attempts in digest history.
 
-See `vercel.json`. Backend must run on Render/Railway/Oracle for full functionality.
+Unsubscribe links are signed, expire after one year and open a public confirmation
+page. Following a link alone does not change preferences; confirmation persists the opt-out.
 
-## API Endpoints
+## Health checks
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/api/auth/register` | No | Create account |
-| POST | `/api/auth/login` | No | Sign in |
-| GET | `/api/auth/me` | Yes | Current user |
-| PUT | `/api/profile` | Yes | Update profile |
-| GET | `/api/opportunities` | Yes | List with filters |
-| GET | `/api/opportunities/match` | Yes | AI-ranked matches |
-| POST | `/api/applications` | Yes | Save opportunity |
-| PATCH | `/api/applications/{id}` | Yes | Update status |
-| POST | `/api/admin/scrape` | Yes | Trigger scrapers |
+- `GET /api/health`: process liveness, independent of database availability.
+- `GET /api/ready`: bounded database/schema readiness; returns 503 during an outage
+  and retries initialization when the database recovers. Render uses this endpoint.
+
+Existing tables are created if absent; `create_all` is not a migration tool. Future
+schema changes need explicit migrations. This repair does not change the existing schema.
 
 ## License
 

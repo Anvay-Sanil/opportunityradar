@@ -3,8 +3,10 @@ from sqlalchemy.pool import NullPool
 from app.config import settings
 
 db_url = settings.database_url
-if db_url.startswith("postgresql://") and "+" not in db_url.split("://")[0]:
-    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+for prefix in ("postgres://", "postgresql://"):
+    if db_url.startswith(prefix):
+        db_url = "postgresql+asyncpg://" + db_url[len(prefix):]
+        break
 
 engine = create_async_engine(
     db_url,

@@ -2,7 +2,7 @@ import uuid
 import bcrypt
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from jose import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,18 +19,30 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    try:
+        return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+    except ValueError:
+        return False
 
 
-class RegisterRequest(BaseModel):
+class PasswordRequest(BaseModel):
+    password: str = Field(min_length=1)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password_bytes(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 UTF-8 bytes")
+        return value
+
+
+class RegisterRequest(PasswordRequest):
     email: EmailStr
-    password: str
-    full_name: str
+    full_name: str = Field(min_length=1, max_length=200)
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(PasswordRequest):
     email: EmailStr
-    password: str
 
 
 class AuthResponse(BaseModel):
@@ -52,6 +64,7 @@ def create_token(user_id: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=settings.access_token_expire_minutes)
     payload = {
         "sub": user_id,
+        "purpose": "access",
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
@@ -90,7 +103,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.email == req.email))
     user = result.scalar_one_or_none()
-    if not user or not user.hashed_password:
+    if not user or not user.is_active or not user.hashed_password:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
     if not verify_password(req.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")

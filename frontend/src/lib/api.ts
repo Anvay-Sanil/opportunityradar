@@ -1,38 +1,50 @@
-const API_BASE = '/api';
+export function getApiBase(value = ''): string {
+  const base = value.trim().replace(/\/+$/, '');
+  if (!base) return '/api';
+  return base.endsWith('/api') ? base : `${base}/api`;
+}
 
-class ApiError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
+const API_BASE = getApiBase(import.meta.env.VITE_API_URL);
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number) {
     super(message);
-    this.status = status;
     this.name = 'ApiError';
   }
 }
 
-async function request<T>(
-  path: string,
-  options: RequestInit = {}
-): Promise<T> {
+export function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('token');
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...((options.headers as Record<string, string>) || {}),
-  };
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  const headers = new Headers(options.headers);
+  headers.set('Accept', 'application/json');
+  if (options.body) headers.set('Content-Type', 'application/json');
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options, headers, signal: options.signal ?? AbortSignal.timeout(45000),
+    });
+  } catch {
+    throw new ApiError('Unable to reach the service. Check your connection and try again.', 0);
   }
-
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers,
-  });
-
   if (res.status === 204) return undefined as T;
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new ApiError(body.detail || 'Request failed', res.status);
+  if (!res.headers.get('content-type')?.includes('json')) {
+    throw new ApiError('The service is unavailable. Please try again shortly.', res.ok ? 502 : res.status);
   }
-  return res.json();
+  let body: any;
+  try { body = await res.json(); }
+  catch { throw new ApiError('The service returned an incomplete response. Please try again.', 502); }
+  if (!res.ok) {
+    const detail = Array.isArray(body?.detail)
+      ? body.detail.map((item: any) => item.msg || 'Invalid input').join('; ')
+      : body?.detail;
+    throw new ApiError(typeof detail === 'string' ? detail : 'Request failed. Please try again.', res.status);
+  }
+  return body as T;
 }
 
 export const api = {
@@ -100,6 +112,10 @@ export const api = {
     stats: () => request<any>('/applications/stats'),
   },
   digest: {
+    checkUnsubscribe: (token: string) => request<{ message: string }>(`/digest/unsubscribe?token=${encodeURIComponent(token)}`),
+    unsubscribe: (token: string) => request<{ message: string }>('/digest/unsubscribe', {
+      method: 'POST', body: JSON.stringify({ token }),
+    }),
     getPreferences: () => request<any>('/digest/preferences'),
     updatePreferences: (data: any) =>
       request<any>('/digest/preferences', {
@@ -111,7 +127,7 @@ export const api = {
   },
   admin: {
     triggerScrape: () =>
-      request<{ message: string; results: Record<string, number> }>('/admin/scrape', {
+      request<{ message: string; task_id: string }>('/admin/scrape', {
         method: 'POST',
       }),
   },

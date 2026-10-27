@@ -10,7 +10,8 @@ import {
   CheckCircle2,
   XCircle,
 } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError, getErrorMessage } from '../lib/api';
+import { RequestError } from '../components/ui/RequestError';
 import { CustomSelect } from '../components/ui/CustomSelect';
 
 const DAYS = [
@@ -29,8 +30,11 @@ export function DigestPage() {
     min_match_score: 0,
     include_new_only: true,
   });
+  const [scheduleTimezone, setScheduleTimezone] = useState('UTC');
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -40,6 +44,7 @@ export function DigestPage() {
       api.digest.getLogs(5),
     ])
       .then(([p, l]) => {
+        if (p?.timezone) setScheduleTimezone(p.timezone);
         if (p) setPrefs({
           ...p,
           day: p.day.charAt(0).toUpperCase() + p.day.slice(1),
@@ -47,13 +52,17 @@ export function DigestPage() {
         });
         setLogs(l || []);
       })
-      .catch(() => {})
+      .catch((err) => {
+        setError(getErrorMessage(err));
+        setLoadFailed(true);
+      })
       .finally(() => setLoading(false));
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setError(null);
     try {
       const payload = {
         ...prefs,
@@ -68,10 +77,12 @@ export function DigestPage() {
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch {} finally {
+    } catch (err) { setError(getErrorMessage(err)); } finally {
       setSaving(false);
     }
   };
+
+  if (loadFailed && !loading) return <RequestError message={error || 'Unable to load this page.'} onRetry={() => window.location.reload()} />;
 
   if (loading) {
     return (
@@ -83,6 +94,7 @@ export function DigestPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
+      {error && <RequestError message={error} />}
       <div className="flex items-center gap-4">
         <div className="w-14 h-14 rounded-2xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">
           <Bell className="w-7 h-7 text-brand-400" />
@@ -90,6 +102,7 @@ export function DigestPage() {
         <div>
           <h1 className="text-3xl font-bold text-white">Digest Settings</h1>
           <p className="text-gray-400 mt-1">Get your top internship matches delivered to your inbox</p>
+          <p className="text-sm text-gray-400 mt-1">Times are in {scheduleTimezone}. Monthly sends on the first selected weekday of each month.</p>
         </div>
       </div>
 
@@ -232,7 +245,7 @@ export function DigestPage() {
                       {log.opportunities_count} opportunities
                     </p>
                     <p className="text-xs text-gray-500">
-                      Sent {new Date(log.sent_at).toLocaleDateString('en-US', {
+                      {log.error ? 'Attempted' : 'Sent'} {new Date(log.sent_at).toLocaleDateString('en-US', {
                         weekday: 'long',
                         month: 'short',
                         day: 'numeric',
@@ -243,7 +256,7 @@ export function DigestPage() {
                   </div>
                 </div>
                 <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${log.opened ? 'bg-emerald-500/10 text-emerald-300' : 'bg-white/[0.06] text-gray-400'}`}>
-                  {log.opened ? 'Opened' : 'Not opened'}
+                  {log.error ? 'Failed' : log.opened ? 'Opened' : 'Sent'}
                 </span>
               </div>
             ))}

@@ -1,8 +1,7 @@
 name: Scrape Internships
 
 on:
-  schedule:
-    - cron: "0 */6 * * *"
+  # Production scheduling is owned by Celery beat. This is a manual diagnostic alternative.
   workflow_dispatch:
 
 jobs:

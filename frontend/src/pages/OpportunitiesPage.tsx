@@ -14,7 +14,8 @@ import {
   Briefcase,
   Rocket,
 } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError, getErrorMessage } from '../lib/api';
+import { RequestError } from '../components/ui/RequestError';
 import { CustomSelect } from '../components/ui/CustomSelect';
 
 const SOURCE_ICONS: Record<string, typeof Briefcase> = {
@@ -35,6 +36,8 @@ export function OpportunitiesPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [workModeFilter, setWorkModeFilter] = useState('');
@@ -44,6 +47,8 @@ export function OpportunitiesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setError(null);
+    setLoadFailed(false);
     try {
       const params: Record<string, string | number> = { page, page_size: 20 };
       if (search) params.search = search;
@@ -54,7 +59,9 @@ export function OpportunitiesPage() {
       setOpportunities(res.items);
       setTotal(res.total);
       setTotalPages(res.total_pages);
-    } catch {
+    } catch (err) {
+      setError(getErrorMessage(err));
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -64,16 +71,21 @@ export function OpportunitiesPage() {
 
   const handleSave = async (oppId: string) => {
     setSaving(oppId);
+    setError(null);
     try {
       await api.applications.create({ opportunity_id: oppId });
-    } catch {
+    } catch (err) {
+      setError(getErrorMessage(err));
     } finally {
       setSaving(null);
     }
   };
 
+  if (loadFailed && !loading) return <RequestError message={error || 'Unable to load opportunities.'} onRetry={load} />;
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
+      {error && <RequestError message={error} />}
       {/* Header */}
       <div className="flex items-center gap-4">
         <div className="w-14 h-14 rounded-2xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">

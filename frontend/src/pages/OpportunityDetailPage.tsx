@@ -14,7 +14,8 @@ import {
   Briefcase,
   Rocket,
 } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError, getErrorMessage } from '../lib/api';
+import { RequestError } from '../components/ui/RequestError';
 import { formatDistanceToNow } from 'date-fns';
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -27,14 +28,21 @@ export function OpportunityDetailPage() {
   const { id } = useParams<{ id: string }>();
   const [opp, setOpp] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
+    setError(null);
+    setLoadFailed(false);
     api.opportunities.get(id)
       .then(setOpp)
-      .catch(() => {})
+      .catch((err) => {
+        setError(getErrorMessage(err));
+        setLoadFailed(true);
+      })
       .finally(() => setLoading(false));
   }, [id]);
 
@@ -43,8 +51,10 @@ export function OpportunityDetailPage() {
     try {
       await api.applications.create({ opportunity_id: id });
       setSaved(true);
-    } catch {}
+    } catch (err) { setError(getErrorMessage(err)); }
   };
+
+  if (loadFailed && !loading) return <RequestError message={error || 'Unable to load this page.'} onRetry={() => window.location.reload()} />;
 
   if (loading) {
     return (
@@ -68,6 +78,7 @@ export function OpportunityDetailPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
+      {error && <RequestError message={error} />}
       {/* Back */}
       <Link to="/opportunities" className="inline-flex items-center gap-2 text-gray-400 hover:text-gray-200 text-sm transition-colors">
         <ArrowLeft className="w-4 h-4" />

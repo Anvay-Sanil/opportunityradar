@@ -16,7 +16,8 @@ import {
   X,
   Plus,
 } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError, getErrorMessage } from '../lib/api';
+import { RequestError } from '../components/ui/RequestError';
 import { CustomSelect } from '../components/ui/CustomSelect';
 import { CollegeAutocomplete } from '../components/ui/CollegeAutocomplete';
 
@@ -26,7 +27,7 @@ const BRANCHES = [
   'Data Science', 'Artificial Intelligence', 'Robotics', 'Other',
 ];
 
-const YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year', 'Graduated'];
+const YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year', '5th Year', 'Graduate'];
 
 const DOMAINS = [
   'Software Development', 'Data Science', 'Machine Learning', 'Web Development',
@@ -63,6 +64,8 @@ export function ProfilePage() {
   const [skillInput, setSkillInput] = useState('');
   const [locationInput, setLocationInput] = useState('');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -87,7 +90,11 @@ export function ProfilePage() {
           });
         }
       })
-      .catch(() => {})
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 404) return;
+        setError(getErrorMessage(err));
+        setLoadFailed(true);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -127,14 +134,17 @@ export function ProfilePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
+    setError(null);
     try {
       await api.profile.upsert(form);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch {} finally {
+    } catch (err) { setError(getErrorMessage(err)); } finally {
       setSaving(false);
     }
   };
+
+  if (loadFailed && !loading) return <RequestError message={error || 'Unable to load this page.'} onRetry={() => window.location.reload()} />;
 
   if (loading) {
     return (
@@ -146,6 +156,7 @@ export function ProfilePage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
+      {error && <RequestError message={error} />}
       <div className="flex items-center gap-4">
         <div className="w-14 h-14 rounded-2xl bg-brand-500/10 border border-brand-500/20 flex items-center justify-center">
           <User className="w-7 h-7 text-brand-400" />

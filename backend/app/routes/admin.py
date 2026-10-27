@@ -1,43 +1,40 @@
-from fastapi import APIRouter, Depends
+import asyncio
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+
+from app.auth.deps import get_admin_user
 from app.models.user import User
-from app.auth.deps import get_current_user
+from app.services.jobs import enqueue_job
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+logger = logging.getLogger(__name__)
 
 
-class ScrapeResponse(BaseModel):
+class JobResponse(BaseModel):
+    task_id: str
     message: str
-    results: dict[str, int]
 
 
-class EnrichResponse(BaseModel):
-    message: str
-    checked: int
-    found_age: int
+async def submit(task, name, queue):
+    try:
+        task_id, created = await asyncio.to_thread(enqueue_job, task, name, queue)
+    except Exception:
+        logger.exception("Could not queue %s", name)
+        raise HTTPException(status_code=503, detail="Background jobs are unavailable. Please try again later.")
+    if not task_id:
+        raise HTTPException(status_code=409, detail="A job is already being scheduled. Please try again.")
+    return JobResponse(task_id=task_id, message="Job queued" if created else "Job is already queued or running")
 
 
-@router.post("/scrape", response_model=ScrapeResponse)
-async def trigger_scrape(user: User = Depends(get_current_user)):
-    import asyncio
-    from app.services.scraper.manager import ScraperManager
-    manager = ScraperManager()
-    results = await asyncio.wait_for(manager.run_all(), timeout=120.0)
-    total = sum(results.values())
-    return ScrapeResponse(
-        message=f"Scraped {total} new opportunities across {len(results)} sources.",
-        results=results,
-    )
+@router.post("/scrape", response_model=JobResponse, status_code=202)
+async def trigger_scrape(user: User = Depends(get_admin_user)):
+    from app.celery_app import scrape_all_opportunities
+    return await submit(scrape_all_opportunities, "scrape", "scraping")
 
 
-@router.post("/enrich", response_model=EnrichResponse)
-async def enrich_companies(user: User = Depends(get_current_user)):
-    import asyncio
-    from app.services.scraper.enricher import CompanyAgeEnricher
-    enricher = CompanyAgeEnricher()
-    stats = await asyncio.wait_for(enricher.enrich_all(batch_size=30), timeout=60.0)
-    return EnrichResponse(
-        message=f"Checked {stats['checked']} companies, found founding dates for {stats['found_age']}.",
-        checked=stats["checked"],
-        found_age=stats["found_age"],
-    )
+@router.post("/enrich", response_model=JobResponse, status_code=202)
+async def enrich_companies(user: User = Depends(get_admin_user)):
+    from app.celery_app import enrich_company_ages
+    return await submit(enrich_company_ages, "enrich", "scraping")
