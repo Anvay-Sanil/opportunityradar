@@ -23,6 +23,9 @@ after 30 days; migrate or upgrade it before expiry to retain the new data. Free
 API instances also have cold starts. Existing accounts from the missing database
 are not recovered by creating an empty replacement.
 
+The selected recovery database was created on 29 October 2026 and expires on
+**28 November 2026**. Migrate or upgrade before then to avoid another outage.
+
 This mode restores the core authentication, profile, listing and application APIs.
 Automatic scraping, queued administration and email digests require the optional
 worker infrastructure or separately configured jobs; they are not running on the
@@ -93,9 +96,9 @@ The actual backend URL is `https://opportunityradar-api-y78m.onrender.com`.
 - Register/login, save a profile, list and page matches, save/update an application.
 - An ordinary account must receive 403 from admin endpoints; an explicitly approved
   admin receives 202, and the worker logs show completion.
-- Confirm that worker and beat are running, Chromium launches, and scheduled jobs
+- For the optional worker topology, confirm worker and beat are running, Chromium launches, and scheduled jobs
   reach their queues. No Redis URL should point to localhost in Render.
-- Send a test digest to an account you control, verify its success history and confirm
+- With email delivery configured, send a test digest to an account you control, verify its success history and confirm
   that its unsubscribe link disables that account's digest preference.
 
 ## Rollback

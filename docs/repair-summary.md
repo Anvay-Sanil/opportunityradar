@@ -1,8 +1,8 @@
 # Repair coverage
 
 This maps the 14 findings from the 28 October 2026 review to the repair branch.
-Code and configuration are repaired; an existing expired/deleted cloud database
-cannot be recovered without access to its hosting account and any available backup.
+Code and configuration are repaired. The missing database was replaced with a
+fresh free database at the owner's request; the old data cannot be restored without a backup.
 
 | # | Finding | Repair |
 | --- | --- | --- |
@@ -21,9 +21,13 @@ cannot be recovered without access to its hosting account and any available back
 | 13 | OpenAI/httpx constructor crash | Tested direct dependency pins, explicit compatible HTTP clients and lazy optional SDK initialization with keyword fallback. |
 | 14 | Long passwords cause server errors | UTF-8 byte-length validation returns 422; existing bcrypt hashes remain supported. |
 
+Live recovery testing also found that incomplete profile creation, invalid years
+and explicit nulls in required fields could cause database errors. Profile writes
+now return 422 for those inputs, preserve partial updates and validate bounded strings.
+
 ## Local validation
 
-- 51 backend tests passed against an isolated PostgreSQL 16 database.
+- 58 backend tests cover the repairs against an isolated PostgreSQL 16 database.
 - 11 frontend tests passed, covering request parsing, routing, session recovery,
   outage states and unsubscribe confirmation.
 - Production frontend build passed with a configured HTTPS backend URL, which was
@@ -34,7 +38,8 @@ cannot be recovered without access to its hosting account and any available back
   in these checks. Redis lock tests use a protocol-compatible in-memory test server.
 - The local Python runtime is Windows/Python 3.11. CI additionally targets Linux/
   Python 3.12 and builds both containers, including a Chromium launch check.
-  Local Docker image execution was unavailable; check CI before merging.
+  Local Docker image execution was unavailable; Linux container builds and Chromium
+  startup passed in CI.
 
 ## Deployment changes to review
 
@@ -47,3 +52,7 @@ expire after 30 days unless migrated or upgraded. No old database backup is avai
 The backend URL has been confirmed as `https://opportunityradar-api-y78m.onrender.com`.
 Render logs confirmed that the previous service failed at startup because its old
 database hostname no longer resolved. See [deployment and recovery](deployment.md).
+
+The replacement `opportunityradar-db-recovery` was created on 29 October 2026 and
+expires on **28 November 2026**. The existing API remains on the free plan; no paid
+worker, Redis or scheduler was provisioned. Retain the current signing secret.
