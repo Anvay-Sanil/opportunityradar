@@ -8,10 +8,10 @@ cannot be recovered without access to its hosting account and any available back
 | --- | --- | --- |
 | 1 | Vercel serves HTML for API calls | Frontend honors `VITE_API_URL`; validates JSON; Vercel builds reject missing/invalid/insecure backend URLs. |
 | 2 | CORS excludes the actual domain | Blueprint uses the `-gamma` domain; configured `FRONTEND_URL` is always included in allowed origins. |
-| 3 | Free database expires | Blueprint uses persistent paid PostgreSQL. Liveness survives DB outages; readiness retries schema initialization. Recovery of the existing cloud database remains an operator action. |
+| 3 | Free database expires | The optional production Blueprint uses persistent paid PostgreSQL; the owner selected a temporary 30-day free replacement as the default. Liveness survives DB outages; readiness retries schema initialization. Recovery of the existing cloud database remains an operator action. |
 | 4 | Celery syntax error | Replaced broken task module with importable task entrypoints and bounded job execution. CI compiles all app modules. |
 | 5 | All accounts can invoke admin workloads | Explicit trusted UUID allowlist; non-admins receive 403. Work is queued with 202, not run in HTTP requests. Unverified email addresses cannot grant privileges. |
-| 6 | Missing task infrastructure and browser | Blueprint provisions Redis, worker and single beat scheduler; image installs Chromium and runtime libraries; duplicate scheduling removed from Actions. |
+| 6 | Missing task infrastructure and browser | The optional paid Blueprint provisions Redis, worker and single beat scheduler; image installs Chromium and runtime libraries; duplicate scheduling removed from Actions. |
 | 7 | Scraper DB errors poison later records | Per-record savepoints, conflict-safe company insertion and source rollback; enrichment gets the same transaction protection. |
 | 8 | Broken digest schedules and false success logs | Minute polling with a catch-up window, cadence/timezone/filter handling, row locks and success-only `last_sent_at`. Failed attempts show as failed. |
 | 9 | Unsubscribe does nothing | Purpose-bound signed tokens, public confirmation page and idempotent persisted opt-out. Link-preview GETs do not mutate settings. |
@@ -38,10 +38,12 @@ cannot be recovered without access to its hosting account and any available back
 
 ## Deployment changes to review
 
-`render.yaml` now describes paid API/worker/beat/Redis/Postgres resources. Review
-the proposed resources and costs before merging or syncing a connected Blueprint.
-The worker is sized for browser scraping. No paid resources were created during repair.
+The owner selected a fresh temporary free database and no paid infrastructure.
+`render.yaml` now describes only the existing free API and the replacement free
+database. `render.production.yaml` holds the opt-in paid worker/Redis/database setup.
+Automatic jobs are not deployed in temporary free mode, and the new database will
+expire after 30 days unless migrated or upgraded. No old database backup is available.
 
-The actual backend URL, existing database health, hosting credentials, SendGrid
-sender and trusted admin account UUID still need to be supplied by the deployment
-owner. See [deployment and recovery](deployment.md) for exact steps.
+The backend URL has been confirmed as `https://opportunityradar-api-y78m.onrender.com`.
+Render logs confirmed that the previous service failed at startup because its old
+database hostname no longer resolved. See [deployment and recovery](deployment.md).

@@ -14,9 +14,23 @@
 4. Deploy the repaired API, then verify `GET <actual-backend>/api/ready` returns JSON
    with HTTP 200, and unauthenticated `/api/auth/me` returns JSON with HTTP 401.
 
-## Render Blueprint
+## Selected temporary free recovery
 
-`render.yaml` defines the API, one worker, one beat scheduler, persistent Redis and
+The owner selected a fresh free database with no backup restoration. The default
+`render.yaml` now contains only the existing free API and `opportunityradar-db-recovery`
+in Oregon. It creates no paid workers, scheduler or Redis. The database expires
+after 30 days; migrate or upgrade it before expiry to retain the new data. Free
+API instances also have cold starts. Existing accounts from the missing database
+are not recovered by creating an empty replacement.
+
+This mode restores the core authentication, profile, listing and application APIs.
+Automatic scraping, queued administration and email digests require the optional
+worker infrastructure or separately configured jobs; they are not running on the
+temporary free topology. Redis caching is disabled instead of targeting localhost.
+
+## Optional paid production Blueprint
+
+`render.production.yaml` defines the API, one worker, one beat scheduler, persistent Redis and
 PostgreSQL 16. It deliberately uses **paid** compute and database plans to avoid
 database expiration and idle scheduling interruptions. Applying it can create or
 upgrade billable resources. Review Render's current pricing and the proposed changes
@@ -70,6 +84,8 @@ both periodic schedulers against the same production database.
 The API client rejects HTML and malformed JSON as service errors. Existing login
 tokens survive temporary network/server failures; only an HTTP 401 clears the session.
 Unsubscribe works without login at `/unsubscribe?token=...`.
+
+The actual backend URL is `https://opportunityradar-api-y78m.onrender.com`.
 
 ## Validation after deployment
 

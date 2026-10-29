@@ -1,0 +1,117 @@
+# This production topology uses paid compute and persistent data stores.
+# Review costs before applying. Existing database recovery/migration is separate.
+services:
+  - type: web
+    name: opportunityradar-api-y78m
+    runtime: docker
+    region: oregon
+    plan: 0.5c-512mb
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/ready
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: opportunityradar-db-recovery
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: opportunityradar-redis
+          property: connectionString
+      - key: SUPABASE_JWT_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
+      - fromGroup: opportunityradar-config
+
+  - type: worker
+    name: opportunityradar-worker
+    runtime: docker
+    region: oregon
+    plan: 1c-2g
+    dockerfilePath: ./Dockerfile
+    dockerCommand: celery -A app.celery_app worker --loglevel=info --concurrency=1 -Q scraping,email,maintenance
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: opportunityradar-db-recovery
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: opportunityradar-redis
+          property: connectionString
+      - key: SUPABASE_JWT_SECRET
+        fromService:
+          type: web
+          name: opportunityradar-api-y78m
+          envVarKey: SUPABASE_JWT_SECRET
+      - key: GEMINI_API_KEY
+        fromService:
+          type: web
+          name: opportunityradar-api-y78m
+          envVarKey: GEMINI_API_KEY
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: FROM_EMAIL
+        sync: false
+      - fromGroup: opportunityradar-config
+
+  - type: worker
+    name: opportunityradar-beat
+    runtime: docker
+    region: oregon
+    plan: 0.5c-512mb
+    numInstances: 1
+    dockerfilePath: ./Dockerfile
+    dockerCommand: celery -A app.celery_app beat --loglevel=info --schedule /tmp/celerybeat-schedule
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: opportunityradar-db-recovery
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: opportunityradar-redis
+          property: connectionString
+      - key: SUPABASE_JWT_SECRET
+        fromService:
+          type: web
+          name: opportunityradar-api-y78m
+          envVarKey: SUPABASE_JWT_SECRET
+      - fromGroup: opportunityradar-config
+
+  - type: keyvalue
+    name: opportunityradar-redis
+    region: oregon
+    plan: 256mb
+    maxmemoryPolicy: noeviction
+    persistenceMode: journal-snapshot
+    ipAllowList: []
+
+databases:
+  - name: opportunityradar-db-recovery
+    plan: 0.1c-256mb
+    region: oregon
+    postgresMajorVersion: "16"
+    diskSizeGB: 5
+    ipAllowList: []
+
+envVarGroups:
+  - name: opportunityradar-config
+    envVars:
+      - key: FRONTEND_URL
+        value: https://opportunityradar-gamma.vercel.app
+      - key: CORS_ORIGINS
+        value: '["https://opportunityradar-gamma.vercel.app","https://opportunityradar-git-fork-anvay-4ddc06-ineeshkhindrias-projects.vercel.app"]'
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_MODEL
+        value: gemini-2.5-flash
+      - key: DIGEST_TIMEZONE
+        value: UTC
+      - key: DEBUG
+        value: "false"

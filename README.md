@@ -11,6 +11,11 @@ PostgreSQL, and optional Gemini/OpenAI/Anthropic ranking.
 - Redis queues jobs; a Celery worker runs scrapers, enrichment, email and maintenance.
 - One Celery beat process schedules jobs. GitHub Actions scraping is manual-only.
 
+The default Render Blueprint follows the owner's temporary free recovery choice:
+free API plus a fresh free database that expires after 30 days. Automatic background
+jobs are not provisioned in that mode. The full paid topology is separately available
+as `render.production.yaml` and requires explicit approval before use.
+
 Vercel's SPA rewrite does not run the Python backend. See [deployment and recovery](docs/deployment.md)
 for the complete production topology and restoring the existing deployment.
 
