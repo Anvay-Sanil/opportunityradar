@@ -78,7 +78,7 @@ export const api = {
             Object.entries(params).map(([k, v]) => [k, String(v)])
           ).toString()
         : '';
-      return request<{ items: any[]; total: number; page: number; page_size: number; total_pages: number }>(
+      return request<{ items: any[]; total: number; page: number; page_size: number; total_pages: number; catalog_total?: number }>(
         `/opportunities${qs}`
       );
     },

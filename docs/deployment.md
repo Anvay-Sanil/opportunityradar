@@ -27,7 +27,17 @@ The selected recovery database was created on 29 October 2026 and expires on
 **28 November 2026**. Migrate or upgrade before then to avoid another outage.
 
 This mode restores the core authentication, profile, listing and application APIs.
-Automatic scraping, queued administration and email digests require the optional
+`PUBLIC_FEED_ENABLED=true` enables a lightweight public employer feed on the existing
+API. It imports current internship postings from Stripe, Figma, Databricks, Cloudflare
+and MongoDB through the [public Greenhouse Job Board API](https://docs.greenhouse.io/job-board).
+It runs on startup and when catalog traffic arrives after a six-hour cooldown. There
+is no guaranteed refresh while the free service sleeps. PostgreSQL coordinates
+concurrent refreshes and retains the cooldown across restarts. Partial upstream
+failures preserve old postings; only a complete employer snapshot retires its closed
+jobs. Existing saved applications retain their opportunity IDs. Company founding
+dates and stipends remain unknown when the source does not provide them.
+
+Chromium-based scraping, queued administration and email digests require the optional
 worker infrastructure or separately configured jobs; they are not running on the
 temporary free topology. Redis caching is disabled instead of targeting localhost.
 
@@ -103,8 +113,8 @@ The actual backend URL is `https://opportunityradar-api-y78m.onrender.com`.
 
 ## Rollback
 
-Keep the previous deployment and a database backup available. This repair does not
-change database columns or erase application data. Rolling back code alone will
+Keep the previous deployment and a database backup available. This repair adds a
+small `feed_refreshes` table and does not erase application data. Rolling back code alone will
 restore the old routing, worker and authorization defects; prefer correcting an
 environment value if that is the source of a deployment problem. Do not delete a
 database to roll back a service.

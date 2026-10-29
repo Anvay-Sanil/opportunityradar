@@ -7,6 +7,26 @@ import { UnsubscribePage } from './UnsubscribePage';
 import { ApplicationsPage } from './ApplicationsPage';
 
 describe('failure and unsubscribe flows', () => {
+  it('distinguishes an empty catalog from filters with no results', async () => {
+    vi.spyOn(api.opportunities, 'list').mockResolvedValue({ items: [], total: 0, catalog_total: 0, page: 1, page_size: 20, total_pages: 1 });
+    render(<MemoryRouter><OpportunitiesPage /></MemoryRouter>);
+    expect(await screen.findByText('No internships have been imported yet')).toBeTruthy();
+    expect(screen.queryByText('Try adjusting your filters')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Refresh listings' })).toBeTruthy();
+  });
+
+  it('lets users clear a search when the catalog has internships', async () => {
+    const list = vi.spyOn(api.opportunities, 'list').mockResolvedValue({ items: [], total: 0, catalog_total: 10, page: 1, page_size: 20, total_pages: 1 });
+    render(<MemoryRouter><OpportunitiesPage /></MemoryRouter>);
+    await screen.findByText('No opportunities match your criteria');
+    const search = screen.getByPlaceholderText('Search by title, company, skills...');
+    fireEvent.change(search, { target: { value: 'unknown' } });
+    await screen.findByText('No opportunities match your criteria');
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect((search as HTMLInputElement).value).toBe('');
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ search: 'unknown' }));
+  });
+
   it('does not disguise a failed listings request as no opportunities', async () => {
     vi.spyOn(api.opportunities, 'list').mockRejectedValue(new ApiError('Service unavailable', 503));
     render(<MemoryRouter><OpportunitiesPage /></MemoryRouter>);

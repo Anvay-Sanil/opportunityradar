@@ -25,10 +25,17 @@ Live recovery testing also found that incomplete profile creation, invalid years
 and explicit nulls in required fields could cause database errors. Profile writes
 now return 422 for those inputs, preserve partial updates and validate bounded strings.
 
+The fresh database also had no listings and no free worker to populate it. The free
+API now imports public employer internship feeds on startup and on catalog traffic
+when due, with durable cooldown and concurrency protection. It updates existing
+postings without breaking saved applications and retires closed jobs only after a
+complete source fetch. Failed feeds retain their previous data. The UI distinguishes
+an empty catalog from filters with zero matches and offers refresh/clear actions.
+
 ## Local validation
 
-- 58 backend tests cover the repairs against an isolated PostgreSQL 16 database.
-- 11 frontend tests passed, covering request parsing, routing, session recovery,
+- 67 backend tests cover the repairs against an isolated PostgreSQL 16 database.
+- 13 frontend tests cover request parsing, routing, session recovery,
   outage states and unsubscribe confirmation.
 - Production frontend build passed with a configured HTTPS backend URL, which was
   verified in the generated bundle. Missing, insecure and invalid values were rejected.
@@ -46,7 +53,8 @@ now return 422 for those inputs, preserve partial updates and validate bounded s
 The owner selected a fresh temporary free database and no paid infrastructure.
 `render.yaml` now describes only the existing free API and the replacement free
 database. `render.production.yaml` holds the opt-in paid worker/Redis/database setup.
-Automatic jobs are not deployed in temporary free mode, and the new database will
+The lightweight public feed uses the existing API; worker jobs are not deployed in
+temporary free mode, and the new database will
 expire after 30 days unless migrated or upgraded. No old database backup is available.
 
 The backend URL has been confirmed as `https://opportunityradar-api-y78m.onrender.com`.

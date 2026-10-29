@@ -12,7 +12,10 @@ PostgreSQL, and optional Gemini/OpenAI/Anthropic ranking.
 - One Celery beat process schedules jobs. GitHub Actions scraping is manual-only.
 
 The default Render Blueprint follows the owner's temporary free recovery choice:
-free API plus a fresh free database that expires after 30 days. Automatic background
+free API plus a fresh free database that expires after 30 days. A lightweight public
+employer feed imports internships on startup and checks for updates when the catalog
+is used, with a six-hour database-backed cooldown. It needs no additional credentials
+or worker. Automatic background
 jobs are not provisioned in that mode. The full paid topology is separately available
 as `render.production.yaml` and requires explicit approval before use.
 

@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     scraper_linkedin_enabled: bool = True
     scraper_wellfound_enabled: bool = True
     scraper_interval_hours: int = 6
+    public_feed_enabled: bool = False
 
     digest_day: str = "sunday"
     digest_time: str = "10:00"

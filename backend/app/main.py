@@ -46,7 +46,11 @@ async def lifespan(app: FastAPI):
         await asyncio.wait_for(initialize_schema(), timeout=10)
     except Exception:
         logger.exception("Database initialization failed; readiness will retry when it recovers")
+    from app.services.public_feed import start_refresh, stop_refresh
+    if settings.public_feed_enabled and app.state.schema_ready:
+        start_refresh()
     yield
+    await stop_refresh()
     await engine.dispose()
     from app.routes.opportunities import ranking_engine
     await ranking_engine.aclose()

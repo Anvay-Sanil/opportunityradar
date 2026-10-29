@@ -12,6 +12,7 @@ from app.models.profile import StudentProfile
 from app.models.user import User
 from app.auth.deps import get_current_user
 from app.services.ranking.engine import RankingEngine
+from app.services.public_feed import prepare_catalog
 
 router = APIRouter(prefix="/api/opportunities", tags=["opportunities"])
 
@@ -59,6 +60,7 @@ class PaginatedResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+    catalog_total: int = 0
 
 
 def build_response(o: Opportunity, today: Optional[date] = None) -> dict:
@@ -111,6 +113,7 @@ async def list_opportunities(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    catalog_total = await prepare_catalog(db)
     query = select(Opportunity).where(Opportunity.is_active == True)
 
     if search:
@@ -177,6 +180,7 @@ async def list_opportunities(
 
     today = date.today()
     return PaginatedResponse(
+        catalog_total=catalog_total,
         items=[OpportunityResponse(**build_response(o, today)) for o in opportunities],
         total=total,
         page=page,
@@ -200,6 +204,7 @@ async def get_matches(
     if not profile:
         raise HTTPException(status_code=400, detail="Complete your profile first to get matches")
 
+    catalog_total = await prepare_catalog(db)
     query = select(Opportunity).where(Opportunity.is_active == True)
     if founded_within_months:
         cutoff = date.today() - relativedelta(months=founded_within_months)
@@ -230,6 +235,7 @@ async def get_matches(
 
     today = date.today()
     return PaginatedResponse(
+        catalog_total=catalog_total,
         items=[OpportunityResponse(**build_response(o, today)) for o in opportunities],
         total=total,
         page=page,
